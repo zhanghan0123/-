@@ -1,0 +1,8 @@
+.DS_Store
+
+# Large source/design assets are kept locally, not in GitHub
+设计稿工作台/pdf/
+设计稿资料库/pdf/
+
+# Git internals should never be nested
+**/.git

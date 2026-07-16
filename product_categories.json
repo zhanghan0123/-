@@ -1,0 +1,8 @@
+{
+  "default_category": "涂附",
+  "force_all_category": "涂附",
+  "source_overrides": {
+    "": "涂附"
+  },
+  "keyword_rules": []
+}

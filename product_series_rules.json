@@ -1,0 +1,33 @@
+{
+  "series_overrides": {},
+  "keyword_rules": [
+    { "keyword": "双面海绵", "series": "海绵块" },
+    { "keyword": "4面海绵", "series": "海绵块" },
+    { "keyword": "海绵彩盒", "series": "海绵块" },
+    { "keyword": "砂纸卷彩贴", "series": "卷装标签" },
+    { "keyword": "V字卷", "series": "V字卷" },
+    { "keyword": "手撕砂布卷", "series": "手撕砂布卷" },
+    { "keyword": "STRIP", "series": "长条" },
+    { "keyword": "手砂板", "series": "手砂板" },
+    { "keyword": "快换碟", "series": "快换碟" },
+    { "keyword": "QUICK-CHANG", "series": "快换碟" },
+    { "keyword": "QUICK CHANG", "series": "快换碟" },
+    { "keyword": "quick change", "series": "快换碟" },
+    { "keyword": "拉绒片", "series": "拉绒片" },
+    { "keyword": "海绵块", "series": "海绵块" },
+    { "keyword": "Sponge Pad", "series": "海绵垫" },
+    { "keyword": "Mesh Pad", "series": "网格垫" },
+    { "keyword": "Spotfix", "series": "点修" },
+    { "keyword": "spotcut", "series": "点修" },
+    { "keyword": "点修", "series": "点修" },
+    { "keyword": "钢纸磨片", "series": "钢纸磨片" },
+    { "keyword": "规格标签", "series": "规格标签" },
+    { "keyword": "标签", "series": "规格标签" },
+    { "keyword": "外箱", "series": "外箱" },
+    { "keyword": "吊卡", "series": "吊卡" },
+    { "keyword": "FASTPLUS", "series": "FASTPLUS" },
+    { "keyword": "SAMPLE BAG", "series": "样品包装" },
+    { "keyword": "SAMPLE-PACK", "series": "样品包装" },
+    { "keyword": "样品包装", "series": "样品包装" }
+  ]
+}
