@@ -130,6 +130,32 @@ python3 design_library.py apply-delete-list \
 - 自动重建 `pdf/`、`thumbnails/`、`design_index.csv`、`design_index.json`、`index.html`
 - 额外输出一份删除执行记录 `deleted_from_selection.csv`
 
+### 7. 应用“导入后待整理区”导出的待同步改名清单
+
+先在网页工作台的“导入后待整理区”里完成字段整理，再点击“导出待同步改名清单”。
+
+之后执行：
+
+```bash
+python3 design_library.py apply-import-renames \
+  --source "/Users/zhanghan/Desktop/涂覆包装-设计稿" \
+  --output "/Users/zhanghan/Documents/涂覆包装设计稿整理归类/设计稿工作台" \
+  --import-csv "/absolute/path/to/import_rename_sync_xxxxx.csv"
+```
+
+这个命令会：
+
+- 先备份当前 `rename_preview.csv`
+- 按 `file_name` 将待整理区填写的名称和字段同步回 `rename_preview.csv`
+- 如果该文件还没进工作台，但在原始设计稿目录里能唯一找到同名 PDF，会自动补录进工作台
+- 自动重建 `pdf/`、`design_index.csv`、`design_index.json`、`index.html`
+- 输出处理日志 `import_rename_apply_log.csv`
+
+注意：
+
+- 如果原始目录或预览清单里出现多个同名 PDF，该条会记为 `ambiguous`，不会自动处理
+- 当前机器如果没有 `pdftoppm`，命令仍会继续执行，但该次重建不会生成新的缩略图
+
 ## 命名规则
 
 统一命名模板：

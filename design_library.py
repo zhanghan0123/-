@@ -682,7 +682,7 @@ def generate_thumbnail(pdf_path: Path, thumbnail_dir: Path, key: str) -> str:
             stderr=subprocess.PIPE,
             timeout=30,
         )
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
+    except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
         return ""
     return f"thumbnails/{key}.jpg"
 
@@ -2046,6 +2046,63 @@ def backup_file(path: Path, backup_dir: Path) -> Optional[Path]:
     return backup_path
 
 
+def sanitize_pdf_filename(name: str) -> str:
+    cleaned = clean_text(name)
+    if not cleaned:
+        return ""
+    if not cleaned.lower().endswith(".pdf"):
+        cleaned = f"{cleaned}.pdf"
+    return sanitize_filename_part(cleaned[:-4]) + ".pdf"
+
+
+def merge_box_count_into_notes(notes: str, box_count: str) -> str:
+    cleaned_notes = clean_text(notes or "")
+    cleaned_box_count = clean_text(box_count or "")
+    cleaned_notes = re.sub(r"(?:^|；)装盒片数:[^；]*", "", cleaned_notes).strip("； ")
+    if not cleaned_box_count:
+        return cleaned_notes
+    parts = [part for part in cleaned_notes.split("；") if part]
+    parts.append(f"装盒片数:{cleaned_box_count}")
+    return "；".join(parts)
+
+
+def apply_import_row_to_record(record: Record, row: Dict[str, str]) -> bool:
+    changed = False
+    planned_new_name = sanitize_pdf_filename(row.get("planned_new_name", ""))
+    if planned_new_name and record.new_name != planned_new_name:
+        record.new_name = planned_new_name
+        changed = True
+
+    field_mapping = {
+        "detected_category": "product_category",
+        "detected_series": "product_series",
+        "detected_package_type": "package_type",
+        "detected_item_no": "product_code",
+        "detected_spec_detail": "spec",
+        "detected_date": "date",
+        "detected_version": "version",
+    }
+    for csv_key, attr_name in field_mapping.items():
+        incoming = clean_text(row.get(csv_key, ""))
+        if not incoming:
+            continue
+        normalized = incoming
+        if attr_name == "date":
+            normalized = normalize_date(incoming)
+        elif attr_name == "version":
+            normalized = incoming.upper()
+        current = getattr(record, attr_name)
+        if current != normalized:
+            setattr(record, attr_name, normalized)
+            changed = True
+
+    merged_notes = merge_box_count_into_notes(record.notes, row.get("detected_box_count", ""))
+    if merged_notes != record.notes:
+        record.notes = merged_notes
+        changed = True
+    return changed
+
+
 def command_apply_renames(args: argparse.Namespace) -> None:
     output = Path(args.output).expanduser().resolve()
     rename_csv = Path(args.rename_csv).expanduser().resolve()
@@ -2086,9 +2143,7 @@ def command_apply_renames(args: argparse.Namespace) -> None:
             if record is None:
                 skipped += 1
                 continue
-            if not planned_new_name.lower().endswith(".pdf"):
-                planned_new_name = f"{planned_new_name}.pdf"
-            planned_new_name = sanitize_filename_part(planned_new_name[:-4]) + ".pdf"
+            planned_new_name = sanitize_pdf_filename(planned_new_name)
             if planned_new_name in seen_names and seen_names[planned_new_name] != record.original_path:
                 raise ValueError(f"改名清单中存在重复目标名称: {planned_new_name}")
             seen_names[planned_new_name] = record.original_path
@@ -2102,6 +2157,140 @@ def command_apply_renames(args: argparse.Namespace) -> None:
     print(f"已应用改名草稿: {rename_csv}")
     print(f"更新数量: {updated}")
     print(f"跳过数量: {skipped}")
+
+
+def command_apply_import_renames(args: argparse.Namespace) -> None:
+    source = Path(args.source).expanduser().resolve()
+    output = Path(args.output).expanduser().resolve()
+    import_csv = Path(args.import_csv).expanduser().resolve()
+    preview_path = output / "data" / "rename_preview.csv"
+    if not source.exists():
+        raise FileNotFoundError(f"未找到原始设计稿目录: {source}")
+    if not preview_path.exists():
+        raise FileNotFoundError(f"未找到预览清单: {preview_path}")
+    if not import_csv.exists():
+        raise FileNotFoundError(f"未找到待同步改名清单: {import_csv}")
+
+    records = read_csv_records(preview_path)
+    backup_dir = output / "data" / "backups"
+    backup_file(preview_path, backup_dir)
+
+    by_original_name: Dict[str, List[Record]] = defaultdict(list)
+    existing_paths = set()
+    for record in records:
+        by_original_name[record.original_name].append(record)
+        existing_paths.add(record.original_path)
+
+    source_name_index: Dict[str, List[Path]] = defaultdict(list)
+    for pdf_path in list_pdf_files(source):
+        source_name_index[pdf_path.name].append(pdf_path)
+
+    updated = 0
+    added = 0
+    skipped = 0
+    ambiguous = 0
+    seen_names: Dict[str, str] = {}
+    import_log_rows: List[Dict[str, str]] = []
+
+    with import_csv.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            file_name = clean_text(row.get("file_name", ""))
+            planned_new_name = sanitize_pdf_filename(row.get("planned_new_name", ""))
+            if not file_name or not planned_new_name:
+                skipped += 1
+                import_log_rows.append({
+                    "file_name": file_name,
+                    "planned_new_name": planned_new_name,
+                    "result": "skipped",
+                    "detail": "缺少 file_name 或 planned_new_name",
+                })
+                continue
+
+            if planned_new_name in seen_names and seen_names[planned_new_name] != file_name:
+                raise ValueError(f"导入清单中存在重复目标名称: {planned_new_name}")
+            seen_names[planned_new_name] = file_name
+
+            matched_records = by_original_name.get(file_name, [])
+            record: Optional[Record] = None
+            result = ""
+            detail = ""
+
+            if len(matched_records) == 1:
+                record = matched_records[0]
+                result = "updated"
+                detail = "命中现有预览记录"
+            elif len(matched_records) > 1:
+                ambiguous += 1
+                import_log_rows.append({
+                    "file_name": file_name,
+                    "planned_new_name": planned_new_name,
+                    "result": "ambiguous",
+                    "detail": f"预览清单中存在 {len(matched_records)} 个同名文件",
+                })
+                continue
+            else:
+                source_matches = [
+                    path for path in source_name_index.get(file_name, [])
+                    if str(path) not in existing_paths
+                ]
+                if len(source_matches) == 1:
+                    record = scan_paths(source, [source_matches[0]])[0]
+                    records.append(record)
+                    by_original_name[record.original_name].append(record)
+                    existing_paths.add(record.original_path)
+                    added += 1
+                    result = "added"
+                    detail = "从原始目录新增补录"
+                elif len(source_matches) > 1:
+                    ambiguous += 1
+                    import_log_rows.append({
+                        "file_name": file_name,
+                        "planned_new_name": planned_new_name,
+                        "result": "ambiguous",
+                        "detail": f"原始目录中存在 {len(source_matches)} 个同名文件",
+                    })
+                    continue
+                else:
+                    skipped += 1
+                    import_log_rows.append({
+                        "file_name": file_name,
+                        "planned_new_name": planned_new_name,
+                        "result": "missing",
+                        "detail": "预览清单和原始目录都未找到可用文件",
+                    })
+                    continue
+
+            if apply_import_row_to_record(record, row):
+                if result == "updated":
+                    updated += 1
+                elif result == "added":
+                    updated += 1
+            import_log_rows.append({
+                "file_name": file_name,
+                "planned_new_name": planned_new_name,
+                "result": result,
+                "detail": detail,
+            })
+
+    write_csv(preview_path, [record.to_csv_row() for record in records])
+    log_path = output / "data" / "import_rename_apply_log.csv"
+    with log_path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["file_name", "planned_new_name", "result", "detail"],
+        )
+        writer.writeheader()
+        writer.writerows(import_log_rows)
+
+    build_args = argparse.Namespace(output=str(output))
+    command_build(build_args)
+    print(f"已应用待整理改名清单: {import_csv}")
+    print(f"更新数量: {updated}")
+    print(f"新增补录: {added}")
+    print(f"歧义数量: {ambiguous}")
+    print(f"跳过数量: {skipped}")
+    print(f"处理日志: {log_path}")
 
 
 def command_apply_delete_list(args: argparse.Namespace) -> None:
@@ -2427,6 +2616,12 @@ def build_parser() -> argparse.ArgumentParser:
     apply_renames_parser.add_argument("--output", required=True, help="资料库输出目录")
     apply_renames_parser.add_argument("--rename-csv", required=True, help="网页导出的改名清单 CSV")
     apply_renames_parser.set_defaults(func=command_apply_renames)
+
+    apply_import_parser = subparsers.add_parser("apply-import-renames", help="应用待整理区导出的改名清单并补录新增设计稿")
+    apply_import_parser.add_argument("--source", required=True, help="原始设计稿目录")
+    apply_import_parser.add_argument("--output", required=True, help="资料库输出目录")
+    apply_import_parser.add_argument("--import-csv", required=True, help="待整理区导出的待同步改名清单 CSV")
+    apply_import_parser.set_defaults(func=command_apply_import_renames)
 
     apply_delete_parser = subparsers.add_parser("apply-delete-list", help="应用网页导出的删除清单并重建设计稿工作台")
     apply_delete_parser.add_argument("--output", required=True, help="资料库输出目录")
